@@ -55,12 +55,25 @@
 -define(STATUS_ACTUAL,        71).
 -define(STATUS_SET,           72).
 
+-define(debug(Fmt,As), io:format((Fmt), (As))).
+
 open(Device) ->
-    uart:open(Device, [{baud, 115200}, {parity,odd}, {stopb, 1}]).
+    uart:open(Device, [{baud, 115200}, {parity,odd}, {stopb, 1}, 
+		       {mode,binary}]).
 
 close(U) ->
     uart:close(U).
     
+flush(U) ->
+    uart:setopts(U, [{active, once}]),
+    uart:setopts(U, [{active, false}]),
+    receive
+	{uart,U,_Data} ->
+	    ?debug("flush: data=~p\n", [_Data]),
+	    ok
+    after 0 ->
+	    ok
+    end.
 
 get_device_type(U) ->
     query(U, 0, ?DEVICE_TYPE, 16),
@@ -114,22 +127,79 @@ set_ocp_threshold(U, Value) ->
     send(U, 0, ?OCP_THRESHOLD, <<Value:16>>),
     recv(U, status).
 
+get_actual_voltage(U) ->
+    {ok,NV} = get_nominal_voltage(U),
+    get_actual_voltage(U, NV).
+
+get_actual_voltage(U, NV) ->
+    {ok,Value} = get_voltage(U),
+    {ok,actual_value(Value, NV)}.
+
 get_voltage(U) ->
     query(U, 0, ?SET_VOLTAGE, 2),
     recv(U, int16).
+
+set_actual_voltage_wait(U, V) ->
+    {ok,NV} = get_nominal_voltage(U),
+    set_actual_voltage(U, V, NV),
+    T0 = erlang:system_time(milli_seconds),
+    voltage_wait(U, V, NV, T0, 0.1).
+
+voltage_wait(U, V0, NV, T0, Eps) ->
+    {ok,State} = get_state(U, NV, undefined),
+    V1 = proplists:get_value(actual_voltage, State, -1.0),
+    T1 = erlang:system_time(milli_seconds),
+    Td = T1-T0,
+    if abs(V0-V1) =< Eps ->
+	    {ok, V1, Td};
+       Td > 5000 ->
+	    {ok, V1, too_long_time};
+       true ->
+	    timer:sleep(100),
+	    voltage_wait(U, V0, NV, T0, Eps)
+    end.
+	    
+
+	    
+	    
+
+    
+    
+
+
+set_actual_voltage(U, V) ->
+    {ok,NV} = get_nominal_voltage(U),
+    set_actual_voltage(U, V, NV).
+
+set_actual_voltage(U, V, NV) ->
+    set_voltage(U, set_value(V, NV)).
 
 set_voltage(U, Value) ->
     send(U, 0, ?SET_VOLTAGE, <<Value:16>>),
     recv(U, status).
 
+get_actual_current(U) ->
+    {ok,NV} = get_nominal_voltage(U),
+    get_actual_voltage(U, NV).
+
+get_actual_current(U, NA) ->
+    {ok,Value} = get_current(U),
+    {ok,actual_value(Value, NA)}.
+
 get_current(U) ->
     query(U, 0, ?SET_CURRENT, 2),
     recv(U, int16).
 
-set_current(U, Value) ->
-    query(U, 0, ?SET_CURRENT, <<Value:16>>),
-    recv(U, status).
+set_actual_current(U, A) ->
+    {ok,NA} = get_nominal_current(U),
+    set_actual_voltage(U, A, NA).
 
+set_actual_current(U, A, NA) ->
+    set_current(U, set_value(A, NA)).
+
+set_current(U, Value) ->
+    send(U, 0, ?SET_CURRENT, <<Value:16>>),
+    recv(U, status).
 
 switch_power_output_on(U) ->
     set_power_supply_control(U, 0, 16#01, 16#01).
@@ -156,7 +226,15 @@ set_power_supply_control(U, DN, Code1, Code2) ->
     send(U, DN, ?POWER_SUPPLY_CONTROL, <<Code1,Code2>>),
     recv(U, status).
 
+get_actual_state(U) ->
+    {ok,NV} = get_nominal_voltage(U),
+    {ok,NA} = get_nominal_current(U),
+    get_state(U,NV,NA).
+
 get_state(U) ->
+    get_state(U,undefined,undefined).
+
+get_state(U,NV,NA) ->
     query(U, 0, ?STATUS_ACTUAL, 6),
     case recv(U, binary) of
 	{ok, <<DeviceState,
@@ -164,16 +242,16 @@ get_state(U) ->
 	       Tracking_active:1, ControllerState:2, Output_on:1,
 	       ActualVoltage:16,
 	       ActualCurrent:16>>} ->
-	    {ok, [{device_state,DeviceState},
-		  {otp_active,OTP_active},
+	    {ok, [{device_state, DeviceState},
+		  {otp_active, OTP_active},
 		  {opp_active, OPP_active},
 		  {ocp_active, OCP_active},
 		  {ovp_active, OVP_active},
 		  {tracking_active, Tracking_active},
 		  {controller_state, ControllerState},
 		  {output_on, Output_on},
-		  {actual_voltage, ActualVoltage},
-		  {actual_current, ActualCurrent}]};
+		  {actual_voltage, actual_value(ActualVoltage,NV)},
+		  {actual_current, actual_value(ActualCurrent,NA)}]};
 	{ok, _} ->
 	    {error, unable_to_decode_state};
 	Error ->
@@ -181,6 +259,9 @@ get_state(U) ->
     end.
 
 get_momentary(U) ->
+    get_momentary(U,undefined,undefined).
+
+get_momentary(U,NV,NA) ->
     query(U, 0, ?STATUS_SET, 6),
     case recv(U, binary) of
 	{ok, <<DeviceState,
@@ -188,26 +269,36 @@ get_momentary(U) ->
 	       Tracking_active:1, ControllerState:2, Output_on:1,
 	       ActualVoltage:16,
 	       ActualCurrent:16>>} ->
-	    {ok, [{device_state,DeviceState},
-		  {otp_active,OTP_active},
+	    {ok, [{device_state, DeviceState},
+		  {otp_active, OTP_active},
 		  {opp_active, OPP_active},
 		  {ocp_active, OCP_active},
 		  {ovp_active, OVP_active},
 		  {tracking_active, Tracking_active},
 		  {controller_state, ControllerState},
 		  {output_on, Output_on},
-		  {actual_voltage, ActualVoltage},
-		  {actual_current, ActualCurrent}]};
+		  {actual_voltage, actual_value(ActualVoltage,NV)},
+		  {actual_current, actual_value(ActualCurrent,NA)}]};
 	{ok, _} ->
 	    {error, unable_to_decode_state};
 	Error ->
 	    Error
     end.
-    
 
-send(U, DN, ObjectNumber, Data) ->
+actual_value(Value, undefined) ->
+    Value;
+actual_value(Value, Nominal) ->    
+    (Nominal*Value)/25600.
+
+set_value(Value, undefined) when is_integer(Value) ->
+    Value;
+set_value(Value, Nominal) when is_number(Value) ->    
+    trunc((25600*Value)/Nominal).
+
+
+send(U, DN, ObjectNumber, Arg) ->
     TransMissionType = ?TRANSMISSION_TYPE_SEND,
-    BinData = iolist_to_binary(Data),
+    BinData = iolist_to_binary(Arg),
     Size = byte_size(BinData),
     Data0 = <<TransMissionType:2, ?CAST_TYPE_REQUEST:1, ?DIRECTION_TO_DEVICE:1,
 	      (Size-1):4,
@@ -249,7 +340,8 @@ recv(U, Type) ->
 		Error ->
 		    Error
 	    end;
-	{ok, _} ->
+	{ok, Header} ->
+	    ?debug("bad telegram header ~p\n", [Header]),
 	    {error, bad_telegram_header};
 	Error ->
 	    Error
@@ -275,14 +367,3 @@ reply(string, Value, _OBJ) ->
     {ok, binary_to_list(String)};
 reply(binary, Value, _OBJ) ->
     {ok, Value}.
-
-
-
-
-    
-
-
-		    
-	    
-
-	      
