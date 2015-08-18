@@ -159,14 +159,6 @@ voltage_wait(U, V0, NV, T0, Eps) ->
 	    voltage_wait(U, V0, NV, T0, Eps)
     end.
 	    
-
-	    
-	    
-
-    
-    
-
-
 set_actual_voltage(U, V) ->
     {ok,NV} = get_nominal_voltage(U),
     set_actual_voltage(U, V, NV).
