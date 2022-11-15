@@ -35,7 +35,8 @@
 %%%===================================================================
 
 start() ->
-    application:start(hex_epx),
+    application:ensure_all_started(epx),
+    epxy:start([]),
     gen_server:start({local, ?SERVER}, ?MODULE, [], []).
 
 set_voltage(V) when is_number(V) ->
@@ -52,7 +53,8 @@ set_current(A) when is_number(A) ->
 %% @end
 %%--------------------------------------------------------------------
 start_link() ->
-    application:start(hex_epx),
+    application:ensure_all_started(epx),
+    epxy:start([]),
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 %%%===================================================================
@@ -75,55 +77,55 @@ init(_Args) ->
     Y = 15,
     W = 130,
     H = 60,
-    hex_epx:init_event(out,
-		       [{id,"voltage"},{type,value},
-			{value, 0.0}, {format, "~.2f"},
-			{font,[{name,"Arial"},{size,40}]},
-			{halign,center},{valign,center},
-			{x,X},{y,Y},{width,W},{height,H}]),
-    hex_epx:init_event(out,
-		       [{id,"voltage.border"},{type,rectangle},
-			{color,black},{x,X},{y,Y},{width,W},{height,H}]),
-    hex_epx:init_event(out,
-		       [{id,"voltage.text"},{type,text},
-			{font,[{name,"Arial"},{slant,roman},{size,10}]},
-			{text,"voltage"},
-			{halign,center},
-			{x,X},{y,Y+H+1},
-			{width,W},{height,10}]),
-    hex_epx:init_event(out,
-		       [{id,"current"},{type,value},
-			{value, 0.0}, {format, "~.2f"},
-			{font,[{name,"Arial"},{size,40}]},
-			{halign,center},{valign,center},
-			{x,X+W+X+X},{y,Y},{width,W},{height,H}]),
-    hex_epx:init_event(out,
-		       [{id,"current.border"},{type,rectangle},{color,black},
-			{x,X+W+X+X},{y,Y},{width,W},{height,H}]),
-    hex_epx:init_event(out,
-		       [{id,"current.text"},{type,text},
-			{font,[{name,"Arial"},{slant,roman},{size,10}]},
-			{text,"current"},
-			{halign,center},
-			{x,X+W+X+X},{y,Y+H+1},
-			{width,W},{height,10}]),
+    epxy:new("voltage",
+	     [{type,value},
+	      {value, 0.0}, {format, "~.2f"},
+	      {font,[{name,"Arial"},{size,40}]},
+	      {halign,center},{valign,center},
+	      {x,X},{y,Y},{width,W},{height,H}]),
+    epxy:new("voltage.border",
+	     [{type,rectangle},
+	      {color,black},{x,X},{y,Y},{width,W},{height,H}]),
+    epxy:new("voltage.text",
+	     [{type,text},
+	      {font,[{name,"Arial"},{slant,roman},{size,10}]},
+	      {text,"voltage"},
+	      {halign,center},
+	      {x,X},{y,Y+H+1},
+	      {width,W},{height,10}]),
+    epxy:new("current",
+	     [{type,value},
+	      {value, 0.0}, {format, "~.2f"},
+	      {font,[{name,"Arial"},{size,40}]},
+	      {halign,center},{valign,center},
+	      {x,X+W+X+X},{y,Y},{width,W},{height,H}]),
+    epxy:new("current.border",
+	     [{type,rectangle},{color,black},
+	      {x,X+W+X+X},{y,Y},{width,W},{height,H}]),
+    epxy:new("current.text",
+	     [{type,text},
+	      {font,[{name,"Arial"},{slant,roman},{size,10}]},
+	      {text,"current"},
+	      {halign,center},
+	      {x,X+W+X+X},{y,Y+H+1},
+	      {width,W},{height,10}]),
 
-    hex_epx:init_event(in,
-		       [{id,"remote"},{type,switch},{halign,center},
-			{x,10},{y,210},{width,80},{height,20},
-			{font,[{name,"Arial"},{size,12}]},
-			{fill,solid}, {color,orange},{text, "CONTROL"}]),
-    hex_epx:init_event(in,
-		       [{id,"output"},{type,switch},{halign,center},
-			{x,230},{y,210},{width,80},{height,20},
-			{font,[{name,"Arial"},{size,12}]},
-			{fill,solid},{color,yellow},{text, "OUTPUT"}]),
+    epxy:new("remote",
+	     [{type,switch},{halign,center},
+	      {x,10},{y,210},{width,80},{height,20},
+	      {font,[{name,"Arial"},{size,12}]},
+	      {fill,solid}, {color,orange},{text, "CONTROL"}]),
+    epxy:new("output",
+	     [{type,switch},{halign,center},
+	      {x,230},{y,210},{width,80},{height,20},
+	      {font,[{name,"Arial"},{size,12}]},
+	      {fill,solid},{color,yellow},{text, "OUTPUT"}]),
 
-    hex_epx:add_event([{id,"remote"}], remote_switch, 
-		      fun(Signal,Env) ->
-			      gen_server:cast(?MODULE, {Signal,Env})
-		      end),
-    hex_epx:add_event([{id,"output"}], output_switch, 
+    epxy:add_callback("remote", remote_switch, 
+		       fun(Signal,Env) ->
+			       gen_server:cast(?MODULE, {Signal,Env})
+		       end),
+    epxy:add_callback("output", output_switch, 
 		      fun(Signal,Env) ->
 			      gen_server:cast(?MODULE, {Signal,Env})
 		      end),
@@ -151,10 +153,10 @@ init(_Args) ->
 %%--------------------------------------------------------------------
 
 handle_call({set_voltage,V}, _From, State) when is_float(V) ->
-    Reply = hex_epx:output([{id,"voltage"}], [{value,V}]),
+    Reply = epxy:set("voltage",[{value,V}]),
     {reply, Reply, State};
 handle_call({set_current,A}, _From, State) when is_float(A) ->
-    Reply = hex_epx:output([{id,"current"}], [{value,A}]),
+    Reply = epxy:set("current", [{value,A}]),
     {reply, Reply, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -203,8 +205,8 @@ handle_info({timeout,_T,get_state}, State) ->
 					 State#state.nv,State#state.na),
     V = proplists:get_value(actual_voltage, PowerState, 0.0),
     A = proplists:get_value(actual_current, PowerState, 0.0),
-    hex_epx:output([{id,"voltage"}], [{value,V}]),
-    hex_epx:output([{id,"current"}], [{value,A}]),
+    epxy:set("voltage", [{value,V}]),
+    epxy:set("current", [{value,A}]),
     Timer = erlang:start_timer(100, self(), get_state),
     {noreply, State#state{ timer=Timer }};
 handle_info(_Info, State) ->

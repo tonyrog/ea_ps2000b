@@ -1,7 +1,8 @@
 {application, ea_ps2000b,
  [
   {description, "Elktro Automatic power supply controller"},
-  {vsn, "0.1"},
+  {vsn, git},
+  {modules, ["@@MODULES@@"]},	
   {registered, [ea_ps2000b]},
   {applications, [
                   kernel,
